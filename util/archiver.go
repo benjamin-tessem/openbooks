@@ -28,31 +28,34 @@ func ExtractArchive(archivePath string) (string, error) {
 		return "", fmt.Errorf("format specified by archive filename is not a walker format: %s (%T)", archivePath, wIface)
 	}
 
-	var newPath string
+	extractedFiles := []string{}
+	baseDir := filepath.Dir(archivePath)
+	
 	err = w.Walk(archivePath, func(f archiver.File) error {
-		// Extract only one file per archive. Otherwise, stop walking,
-		// remove extracted items, and deliver the archive itself.
-		if newPath != "" {
-			err := os.Remove(newPath)
-			if err != nil {
-				return err
-			}
-			newPath = ""
-			return archiver.ErrStopWalk
+		// Skip directories
+		if f.IsDir() {
+			return nil
 		}
 
-		newPath = filepath.Join(filepath.Dir(archivePath), f.Name()+".temp")
+		extractedPath := filepath.Join(baseDir, f.Name()+".temp")
+		
+		// Create directory structure if needed
+		if err := os.MkdirAll(filepath.Dir(extractedPath), 0755); err != nil {
+			return err
+		}
 
-		out, err := os.Create(newPath)
+		out, err := os.Create(extractedPath)
 		if err != nil {
 			return err
 		}
 
 		copied, err := io.Copy(out, f)
 		if err != nil {
+			out.Close()
 			return err
 		}
 		if copied != f.Size() {
+			out.Close()
 			return ErrNotFullyCopied
 		}
 
@@ -61,22 +64,32 @@ func ExtractArchive(archivePath string) (string, error) {
 			return err
 		}
 
+		extractedFiles = append(extractedFiles, extractedPath)
 		return nil
 	})
 
 	if err != nil {
+		// Clean up any partially extracted files on error
+		for _, path := range extractedFiles {
+			os.Remove(path)
+		}
 		return "", err
 	}
 
-	// If we extracted exactly one file, send that file and remove the zip file.
-	// Otherwise, send the archive itself.
-	if newPath != "" {
-		err := os.Remove(archivePath)
-		if err != nil {
-			log.Println("remove error", err)
-		}
-		return newPath, nil
+	// Remove the original archive file
+	err = os.Remove(archivePath)
+	if err != nil {
+		log.Println("remove error", err)
+	}
+
+	// If we extracted exactly one file, return that file path
+	if len(extractedFiles) == 1 {
+		return extractedFiles[0], nil
+	} else if len(extractedFiles) > 1 {
+		// Multiple files extracted, return the base directory
+		return baseDir, nil
 	} else {
+		// No files extracted, this shouldn't normally happen for valid archives
 		return archivePath, nil
 	}
 }

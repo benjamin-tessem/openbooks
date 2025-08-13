@@ -46,10 +46,26 @@ func DownloadExtractDCCString(baseDir, dccStr string, progress io.Writer) (strin
 }
 
 func renameTempFile(filePath string) string {
+	// Check if it's a single file with .temp extension
 	if filepath.Ext(filePath) == ".temp" {
 		newPath := filePath[:len(filePath)-len(".temp")]
 		os.Rename(filePath, newPath)
 		return newPath
+	}
+
+	// If it's a directory, rename all .temp files within it
+	fileInfo, err := os.Stat(filePath)
+	if err == nil && fileInfo.IsDir() {
+		filepath.Walk(filePath, func(path string, info os.FileInfo, err error) error {
+			if err != nil {
+				return nil
+			}
+			if !info.IsDir() && filepath.Ext(path) == ".temp" {
+				newPath := path[:len(path)-len(".temp")]
+				os.Rename(path, newPath)
+			}
+			return nil
+		})
 	}
 
 	return filePath
